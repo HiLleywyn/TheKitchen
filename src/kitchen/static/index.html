@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TheKitchen</title>
+<style>
+  :root { --ink:#1d1b19; --muted:#6d655d; --line:#e2dcd3; --bg:#faf7f2; --accent:#8a5a2b; --warn:#8a6d1b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 ui-serif, Georgia, serif; }
+  header { padding:1.5rem 1.25rem 0.5rem; }
+  h1 { margin:0; font-size:1.5rem; letter-spacing:0.02em; }
+  header p { margin:0.25rem 0 0; color:var(--muted); font-size:0.9rem; }
+  main { max-width:60rem; margin:0 auto; padding:1rem 1.25rem 4rem; display:grid; gap:1.5rem; }
+  section { background:#fff; border:1px solid var(--line); border-radius:10px; padding:1rem 1.1rem; }
+  h2 { margin:0 0 0.75rem; font-size:1rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:0.92rem; }
+  th, td { text-align:left; padding:0.4rem 0.35rem; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; }
+  tr:last-child td { border-bottom:none; }
+  form { display:flex; flex-wrap:wrap; gap:0.5rem; align-items:flex-end; }
+  label { display:grid; gap:0.2rem; font-size:0.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
+  input, select { font:inherit; font-size:0.92rem; padding:0.35rem 0.45rem; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); }
+  input[type=number] { width:7rem; }
+  button { font:inherit; font-size:0.9rem; padding:0.4rem 0.9rem; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  button.ghost { background:#fff; color:var(--accent); }
+  .kind { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.72rem; padding:0.05rem 0.35rem; border-radius:4px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .kind.measured { color:#1f5c3d; border-color:#bcd9c8; background:#f0f8f3; }
+  .kind.estimated, .kind.inferred { color:var(--warn); border-color:#e6d9a8; background:#fdf8e7; }
+  .kind.calculated { color:#2b4a7a; border-color:#c3d3e8; background:#f2f6fc; }
+  .muted { color:var(--muted); }
+  .caveat { font-size:0.85rem; color:var(--warn); margin:0.4rem 0 0; }
+  .empty { color:var(--muted); font-size:0.9rem; margin:0; }
+  .row { display:flex; gap:1.5rem; flex-wrap:wrap; }
+  .row > div { min-width:9rem; }
+  .big { font-size:1.6rem; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TheKitchen</h1>
+  <p>Brewing records. Every number says where it came from.</p>
+</header>
+<main>
+  <section>
+    <h2>Batches</h2>
+    <table>
+      <thead><tr><th>Code</th><th>Name</th><th>Started</th><th>Status</th></tr></thead>
+      <tbody id="batches"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Batch detail</h2>
+    <div id="detail"><p class="empty">Pick a batch code above.</p></div>
+  </section>
+
+  <section>
+    <h2>New batch</h2>
+    <form id="batch-form">
+      <label>Code <input name="code" required placeholder="2026-11-porter"></label>
+      <label>Name <input name="name" placeholder="November porter"></label>
+      <label>Volume (gal) <input name="volume_gal" type="number" step="0.25" min="0"></label>
+      <button type="submit">Add batch</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Log a hydrometer reading</h2>
+    <form id="reading-form">
+      <label>Batch code <input name="code" required placeholder="2026-11-porter"></label>
+      <label>Reading (SG) <input name="sg" type="number" step="0.001" min="0.9" max="1.2" required placeholder="1.048"></label>
+      <label>Sample temp (°F) <input name="temp_f" type="number" step="1" min="32" max="120" required value="68"></label>
+      <label>Note <input name="note" placeholder="post-boil"></label>
+      <button type="submit">Record</button>
+    </form>
+    <p class="caveat" id="reading-msg"></p>
+  </section>
+
+  <section>
+    <h2>Inventory</h2>
+    <table>
+      <thead><tr><th>Item</th><th>Category</th><th>Amount</th><th>Provenance</th></tr></thead>
+      <tbody id="inventory"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const $ = (sel) => document.querySelector(sel);
+
+function kindTag(kind) {
+  return `<span class="kind ${kind}">${kind.replace('_', ' ')}</span>`;
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || res.statusText);
+  return body;
+}
+
+async function loadBatches() {
+  const rows = await api('/api/batches');
+  const tbody = $('#batches');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">No batches yet.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(b => `
+    <tr>
+      <td><a href="#" data-code="${b.code}">${b.code}</a></td>
+      <td>${b.name || '<span class="muted">—</span>'}</td>
+      <td class="muted">${b.started_at.slice(0, 10)}</td>
+      <td>${b.status ? `${b.status} ${kindTag(b.status_source)}` : '<span class="muted">not set</span>'}</td>
+    </tr>`).join('');
+  tbody.querySelectorAll('a[data-code]').forEach(a => {
+    a.addEventListener('click', (e) => { e.preventDefault(); loadDetail(a.dataset.code); });
+  });
+}
+
+async function loadDetail(code) {
+  const batches = await api('/api/batches');
+  const batch = batches.find(b => b.code === code);
+  if (!batch) return;
+  const s = await api(`/api/batches/${batch.id}`);
+  const val = (v) => v ? `${v.value} ${v.unit} ${kindTag(v.kind)}` : '<span class="muted">—</span>';
+  const readings = s.readings.length
+    ? `<table><thead><tr><th>When</th><th>Kind</th><th>Value</th><th>Provenance</th><th>Method</th></tr></thead><tbody>` +
+      s.readings.map(r => `<tr>
+        <td class="muted">${r.taken_at.slice(0, 16).replace('T', ' ')}</td>
+        <td>${r.kind}</td>
+        <td>${r.amount} ${r.unit}</td>
+        <td>${kindTag(r.provenance_kind)}</td>
+        <td class="muted">${r.method || '—'}</td></tr>`).join('') + '</tbody></table>'
+    : '<p class="empty">No readings yet.</p>';
+  $('#detail').innerHTML = `
+    <div class="row">
+      <div><div class="muted">First gravity</div><div class="big">${s.first_gravity ? s.first_gravity.value : '—'}</div>${s.first_gravity ? kindTag(s.first_gravity.kind) : ''}</div>
+      <div><div class="muted">Latest gravity</div><div class="big">${s.latest_gravity ? s.latest_gravity.value : '—'}</div>${s.latest_gravity ? kindTag(s.latest_gravity.kind) : ''}</div>
+      <div><div class="muted">ABV (estimated)</div><div class="big">${s.abv ? s.abv.value.toFixed(2) + '%' : '—'}</div>${s.abv ? kindTag(s.abv.kind) : ''}</div>
+      <div><div class="muted">Attenuation</div><div class="big">${s.apparent_attenuation ? s.apparent_attenuation.value.toFixed(1) + '%' : '—'}</div>${s.apparent_attenuation ? kindTag(s.apparent_attenuation.kind) : ''}</div>
+    </div>
+    <p style="margin:0.9rem 0 0.2rem">Status: <strong>${s.status.value}</strong> ${kindTag(s.status.kind)}</p>
+    <p class="muted" style="font-size:0.85rem;margin:0 0 0.9rem">${s.status.reason}</p>
+    ${s.caveats.map(c => `<p class="caveat">${c}</p>`).join('')}
+    <h2 style="margin-top:1.2rem">Readings</h2>
+    ${readings}`;
+}
+
+async function loadInventory() {
+  const rows = await api('/api/inventory');
+  const tbody = $('#inventory');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Nothing in stock yet.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(i => `<tr>
+    <td>${i.name}</td><td class="muted">${i.category}</td>
+    <td>${i.amount} ${i.unit}</td><td>${kindTag(i.provenance_kind)}</td></tr>`).join('');
+}
+
+$('#batch-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const payload = { code: f.get('code'), name: f.get('name') || null };
+  const vol = f.get('volume_gal');
+  if (vol) payload.volume_gal = Number(vol);
+  try {
+    await api('/api/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    e.target.reset();
+    await loadBatches();
+  } catch (err) { alert(err.message); }
+});
+
+$('#reading-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const code = f.get('code');
+  try {
+    const batches = await api('/api/batches');
+    const batch = batches.find(b => b.code === code);
+    if (!batch) throw new Error(`No batch with code ${code}`);
+    const reading = await api(`/api/batches/${batch.id}/gravity`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sg: Number(f.get('sg')), temp_f: Number(f.get('temp_f')), note: f.get('note') || null })
+    });
+    $('#reading-msg').textContent = `Recorded ${reading.amount} SG (${reading.method}).`;
+    await loadDetail(code);
+  } catch (err) { $('#reading-msg').textContent = err.message; }
+});
+
+loadBatches();
+loadInventory();
+</script>
+</body>
+</html>
